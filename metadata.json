@@ -1,0 +1,5 @@
+{
+  "name": "CoAuthor AI (CN)",
+  "description": "智能协作写作助手原型。支持大纲生成、分块写作、AI辅助、多级评审与多人协作。",
+  "requestFramePermissions": []
+}
