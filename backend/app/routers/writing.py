@@ -25,6 +25,60 @@ def create_stream_response(model: str, prompt: str):
 
     return StreamingResponse(generator(), media_type="text/plain")
 
+
+@router.post("/auto-write/questions")
+async def generate_auto_write_questions(req: AutoWriteQuestionsRequest):
+    fallback_questions = [
+        "我需要先了解你的想法：这一小节你想写什么？",
+        "这段内容的目标读者是谁？",
+        "你想强调的核心要点或论据有哪些？",
+        "是否有案例、数据或参考资料需要体现？",
+        "你希望的语气或风格是什么？",
+    ]
+
+    points_str = "\n".join(
+        [
+            f"- {p.get('text', p) if isinstance(p, dict) else str(p)}"
+            for p in req.writingPoints
+        ]
+    )
+
+    context_parts = [f"章节标题：{req.sectionTitle}"]
+    if points_str:
+        context_parts.append(f"写作要点：\n{points_str}")
+    if req.materials.strip():
+        context_parts.append(f"参考资料：{req.materials[:800]}")
+
+    prompt = (
+        "你是一名写作助手，需要在生成正文前通过对话澄清写作需求。"
+        "请基于提供的章节信息，生成5个最有助于完善写作意图的追问。"
+        "要求：\n"
+        "1. 使用简洁中文提问，避免客套。\n"
+        "2. 结合写作要点、目标受众、案例/数据、风格语气等角度自由发挥，不要固定模板。\n"
+        "3. 返回严格的 JSON 数组，每个元素是一条问题字符串。不要输出其它内容。\n"
+        f"\n上下文信息：\n{chr(10).join(context_parts)}"
+    )
+
+    raw_result = await call_llm(REASONING_MODEL, [{"role": "user", "content": prompt}])
+    questions = clean_and_parse_json(raw_result, default_value=[])
+
+    normalized = []
+    if isinstance(questions, list):
+        for q in questions:
+            if isinstance(q, str):
+                text = q
+            elif isinstance(q, dict):
+                text = q.get("question") or q.get("q") or q.get("text") or str(q)
+            else:
+                text = str(q)
+            if text and text.strip():
+                normalized.append(text.strip())
+
+    if not normalized:
+        normalized = fallback_questions
+
+    return {"result": normalized[:5]}
+
 # 添加到文件顶部的 process 函数附近
 def process_writing_points(raw_data):
     """
