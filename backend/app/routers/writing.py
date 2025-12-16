@@ -94,6 +94,7 @@ async def generate_auto_write_questions(req: AutoWriteQuestionsRequest):
         "为支撑这一节，你希望强调的关键论据、事实或步骤有哪些？",
         "是否有案例、数据或外部资料能支撑上述论据？如果没有，也请说明当前掌握的定性证据。",
         "最终希望呈现的语气和风格是什么？（如专业、鼓励、客观等）",
+
     ]
 
     points_str = "\n".join(
@@ -123,6 +124,7 @@ async def generate_auto_write_questions(req: AutoWriteQuestionsRequest):
             {"role": "user", "content": prompt},
         ],
     )
+
     questions = clean_and_parse_json(raw_result, default_value=[])
 
     normalized = []
@@ -141,7 +143,6 @@ async def generate_auto_write_questions(req: AutoWriteQuestionsRequest):
         normalized = fallback_questions
 
     return {"result": normalized[:5]}
-
 
 @router.post("/auto-write/next-question")
 async def generate_auto_write_next_question(req: AutoWriteNextQuestionRequest):
