@@ -1,9 +1,18 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { OutlineNode, User, ReviewComment, PromptsConfig, ChatSession, Reference, WritingPoint, Version, ChatMessage, VersionType, GlobalGuide, ChapterReviewData } from '../types';
-import { 
-    generateChunkContent, reviewChunk, 
-    generateSmartEdit, generateFollowUpSuggestions, generateMergePolish, generatePartialMerge, generateSelectionWithReferences, generateSubSectionTemplate, polishContent, generateToDoFix
+import {
+    generateChunkContent,
+    reviewChunk,
+    generateSmartEdit,
+    generateFollowUpSuggestions,
+    generateMergePolish,
+    generatePartialMerge,
+    generateSelectionWithReferences,
+    generateSubSectionTemplate,
+    polishContent,
+    generateToDoFix,
+    fetchAutoWriteQuestions,
 } from '../services/geminiService';
 import { 
     Wand2, Sparkles, MessageSquare, Quote, ArrowUp, 
@@ -11,6 +20,17 @@ import {
 } from 'lucide-react';
 import ChatAssistant from './ChatAssistant';
 import ReactMarkdown from 'react-markdown';
+
+type AutoWriteMessage = { role: 'assistant' | 'user'; text: string };
+
+const AUTO_WRITE_TURNS = 5;
+const DEFAULT_AUTO_WRITE_QUESTIONS = [
+    "我需要先了解你的想法：这一小节你想写什么？",
+    "这段内容的目标读者是谁？",
+    "你想强调的核心要点或论据有哪些？",
+    "是否有案例、数据或参考资料需要体现？",
+    "你希望的语气或风格是什么？"
+];
 
 interface Props {
   activeNode: OutlineNode;
@@ -136,10 +156,19 @@ const WriterInterface: React.FC<Props> = ({
   const [globalSelectionText, setGlobalSelectionText] = useState("");
 
   const [activeReferences, setActiveReferences] = useState<Reference[]>([]);
-  
+
   // Guide UI states
   const [showGlobalDrawer, setShowGlobalDrawer] = useState(false);
   const [showChapterGuidePopup, setShowChapterGuidePopup] = useState(false);
+
+  // Auto-write conversation state
+  const [showAutoWriteDialog, setShowAutoWriteDialog] = useState(false);
+  const [autoWriteQuestions, setAutoWriteQuestions] = useState<string[]>(DEFAULT_AUTO_WRITE_QUESTIONS);
+  const [autoWriteMessages, setAutoWriteMessages] = useState<AutoWriteMessage[]>([]);
+  const [autoWriteInput, setAutoWriteInput] = useState("");
+  const [autoWriteStep, setAutoWriteStep] = useState(0);
+
+  const autoWriteTotal = autoWriteQuestions.length || AUTO_WRITE_TURNS;
 
   // Derive hasSelection for passing to child components
   const hasSelection = selectionRange && selectionRange.start !== selectionRange.end && isEditorSelection;
@@ -425,12 +454,76 @@ const WriterInterface: React.FC<Props> = ({
   const handleFullWrite = async () => {
       if (!activeSubNode) return;
       setMenuVisible(false);
+      try {
+          const questions = await fetchAutoWriteQuestions(
+              activeSubNode.title,
+              activeSubNode.writingPoints || [],
+              globalMaterials
+          );
+
+          const normalized = Array.isArray(questions)
+              ? questions.filter((q) => typeof q === 'string' && q.trim()).map((q) => q.trim())
+              : [];
+
+          const finalQuestions = (normalized.length ? normalized : DEFAULT_AUTO_WRITE_QUESTIONS).slice(0, AUTO_WRITE_TURNS);
+          setAutoWriteQuestions(finalQuestions);
+          setAutoWriteMessages([{ role: 'assistant', text: finalQuestions[0] }]);
+      } catch (error) {
+          const fallback = DEFAULT_AUTO_WRITE_QUESTIONS.slice(0, AUTO_WRITE_TURNS);
+          setAutoWriteQuestions(fallback);
+          setAutoWriteMessages([{ role: 'assistant', text: fallback[0] }]);
+      }
+
+      setAutoWriteInput("");
+      setAutoWriteStep(0);
+      setShowAutoWriteDialog(true);
+  };
+
+  const runAutoWriteGeneration = async (messages: AutoWriteMessage[]) => {
+      if (!activeSubNode) return;
+
+      let questionIndex = 0;
+      const dialogSummary = messages.map((msg) => {
+          if (msg.role === 'assistant') {
+              questionIndex += 1;
+              return `Q${questionIndex}: ${msg.text}`;
+          }
+          return `A${questionIndex}: ${msg.text}`;
+      }).join('\n');
+
+      const userNotes = messages
+          .filter((m) => m.role === 'user')
+          .map((m, idx) => `${idx + 1}. ${m.text}`)
+          .join('\n');
+
+      const context = `基于用户的多轮输入，请为《${activeSubNode.title}》生成内容。\n对话摘要：\n${dialogSummary}\n\n用户需求汇总：\n${userNotes}`;
+
       setGenerationContext('section');
       setViewMode('split_generation');
       setGeneratedContent("");
-      await generateChunkContent(activeSubNode.title, "", "professional", writingPoints, customPrompts?.content_gen, (chunk) => setGeneratedContent(chunk));
+      setShowAutoWriteDialog(false);
+
+      await generateChunkContent(activeSubNode.title, context, "professional", writingPoints, customPrompts?.content_gen, (chunk) => setGeneratedContent(chunk));
   };
-  
+
+  const handleAutoWriteSubmit = async () => {
+      if (!autoWriteInput.trim()) return;
+      const userMessage: AutoWriteMessage = { role: 'user', text: autoWriteInput.trim() };
+      const updatedMessages = [...autoWriteMessages, userMessage];
+      const nextStep = autoWriteStep + 1;
+      setAutoWriteMessages(updatedMessages);
+      setAutoWriteInput("");
+      setAutoWriteStep(nextStep);
+
+      if (nextStep >= autoWriteTotal) {
+          await runAutoWriteGeneration(updatedMessages);
+      } else {
+          const remaining = Math.max(autoWriteTotal - nextStep, 0);
+          const nextQuestion = autoWriteQuestions[nextStep] || `还有其他想补充的吗？（还剩 ${remaining} 次）`;
+          setAutoWriteMessages([...updatedMessages, { role: 'assistant', text: nextQuestion }]);
+      }
+  };
+
   const handleAcceptGeneration = () => {
       if (generationContext === 'chapter') {
           // Chapter Merge / Polish -> Save to L1 History
@@ -646,10 +739,52 @@ const WriterInterface: React.FC<Props> = ({
   return (
     <div ref={containerRef} className="flex flex-row h-full bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden w-full relative select-text">
         {viewingDiff && <DiffModal oldText={viewingDiff.old} newText={viewingDiff.new} onClose={() => setViewingDiff(null)} />}
-        
+
+        {showAutoWriteDialog && (
+            <div className="fixed inset-0 bg-black/40 z-[12000] flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl h-[70vh] flex flex-col">
+                    <div className="p-4 border-b flex items-center justify-between">
+                        <div>
+                            <div className="text-sm font-bold text-slate-900">一键代写 - 多轮收集需求</div>
+                            <div className="text-xs text-slate-500">已收集 {Math.min(autoWriteStep, autoWriteTotal)}/{autoWriteTotal} 次用户输入</div>
+                        </div>
+                        <button onClick={() => setShowAutoWriteDialog(false)} className="text-slate-400 hover:text-slate-600 text-sm">关闭</button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/60">
+                        {autoWriteMessages.map((msg, idx) => (
+                            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`${msg.role === 'user' ? 'bg-primary text-white rounded-2xl rounded-tr-sm' : 'bg-white text-slate-700 rounded-2xl rounded-tl-sm border border-slate-200'} px-3 py-2 text-sm max-w-[80%] shadow-sm whitespace-pre-wrap`}>
+                                    {msg.text}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="p-4 border-t bg-white">
+                        <div className="text-[10px] text-slate-500 mb-2">请连续回答 {autoWriteTotal} 次问题，系统将基于你的输入自动生成本节内容。</div>
+                        <div className="flex gap-2">
+                            <input
+                                value={autoWriteInput}
+                                onChange={(e) => setAutoWriteInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAutoWriteSubmit()}
+                                placeholder="请输入你的想法或补充..."
+                                className="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                            />
+                            <button
+                                onClick={handleAutoWriteSubmit}
+                                className="px-4 py-2 bg-primary text-white rounded-lg text-sm font-bold hover:bg-blue-600 disabled:opacity-50"
+                                disabled={!autoWriteInput.trim()}
+                            >
+                                {autoWriteStep + 1 >= autoWriteTotal ? '完成并生成' : '提交'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
         {/* GLOBAL GUIDE SIDE DRAWER */}
         {globalGuide && (
-            <div 
+            <div
                 className={`fixed left-0 top-20 z-[50] flex transition-all duration-300 ${showGlobalDrawer ? 'translate-x-0' : '-translate-x-[320px]'}`}
                 onMouseEnter={() => setShowGlobalDrawer(true)}
                 onMouseLeave={() => setShowGlobalDrawer(false)}
