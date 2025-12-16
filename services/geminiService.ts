@@ -243,6 +243,32 @@ export const generateArticle = async (outline: string, requirements: string) => 
   return postRequest("/generate", { outline, requirements });
 };
 
+export const fetchAutoWriteQuestions = async (
+  sectionTitle: string,
+  writingPoints: any[] = [],
+  materials?: string
+) => {
+  return postRequest("/auto-write/questions", {
+    sectionTitle,
+    writingPoints,
+    materials: materials || "",
+  });
+};
+
+export const fetchAutoWriteNextQuestion = async (
+  sectionTitle: string,
+  writingPoints: any[] = [],
+  materials: string = "",
+  history: { role: string; text: string }[] = [],
+) => {
+  return postRequest("/auto-write/next-question", {
+    sectionTitle,
+    writingPoints,
+    materials,
+    history,
+  });
+};
+
 // 流式生成
 export const generateArticleStream = async (outline: string, requirements: string, onChunk: (text: string) => void) => {
   try {
