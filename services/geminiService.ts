@@ -254,7 +254,6 @@ export const fetchAutoWriteQuestions = async (
     materials: materials || "",
   });
 };
-
 export const fetchAutoWriteNextQuestion = async (
   sectionTitle: string,
   writingPoints: any[] = [],
