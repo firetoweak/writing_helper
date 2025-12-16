@@ -13,6 +13,7 @@ import {
     polishContent,
     generateToDoFix,
     fetchAutoWriteNextQuestion,
+
 } from '../services/geminiService';
 import { 
     Wand2, Sparkles, MessageSquare, Quote, ArrowUp, 
@@ -30,6 +31,7 @@ const DEFAULT_AUTO_WRITE_QUESTIONS = [
     "为了支撑论点，你希望强调的关键事实、论据或行动步骤有哪些？",
     "有没有案例、数据或外部资料支撑上述论据？如果暂时没有，也请说明你手头的定性证据。",
     "你希望最终呈现的语气和风格是什么？（如专业、鼓励、客观等）"
+
 ];
 
 interface Props {
@@ -166,8 +168,8 @@ const WriterInterface: React.FC<Props> = ({
   const [autoWriteMessages, setAutoWriteMessages] = useState<AutoWriteMessage[]>([]);
   const [autoWriteInput, setAutoWriteInput] = useState("");
   const [autoWriteStep, setAutoWriteStep] = useState(0);
-
   const autoWriteTotal = AUTO_WRITE_TURNS;
+
 
   // Derive hasSelection for passing to child components
   const hasSelection = selectionRange && selectionRange.start !== selectionRange.end && isEditorSelection;
@@ -523,10 +525,10 @@ const WriterInterface: React.FC<Props> = ({
           await runAutoWriteGeneration(updatedMessages);
       } else {
           const nextQuestion = await getNextAutoWriteQuestion(updatedMessages, nextStep);
+
           setAutoWriteMessages([...updatedMessages, { role: 'assistant', text: nextQuestion }]);
       }
   };
-
   const renderAutoWriteMessages = () => {
       let questionCounter = 0;
       return autoWriteMessages.map((msg, idx) => {
@@ -543,9 +545,7 @@ const WriterInterface: React.FC<Props> = ({
                   >
                       <div className={`text-[11px] font-semibold mb-1 ${isAssistant ? 'text-slate-500' : 'text-white/80'}`}>{label}</div>
                       {isAssistant ? (
-                          <div className="prose prose-sm max-w-none text-slate-800 leading-relaxed">
-                              <ReactMarkdown>{msg.text}</ReactMarkdown>
-                          </div>
+                          <ReactMarkdown className="prose prose-sm max-w-none text-slate-800 leading-relaxed">{msg.text}</ReactMarkdown>
                       ) : (
                           <div className="text-sm leading-relaxed">{msg.text}</div>
                       )}

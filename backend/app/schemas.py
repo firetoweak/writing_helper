@@ -160,3 +160,4 @@ class AutoWriteNextQuestionRequest(BaseModel):
     writingPoints: List[Any] = []
     materials: str = ""
     history: List[ChatMessageModel] = []
+
