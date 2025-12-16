@@ -12,6 +12,66 @@ router = APIRouter(prefix="/api/writing", tags=["Writing"])
 
 import time # 记得在文件头部 import time
 
+AUTO_WRITE_SYSTEM_PROMPT = """# 基于事实锚定的动态访谈与写作专家 
+## 1. 核心原则
+你是一位严谨的商业分析师。你的工作是基于用户的输入指令进行**启发式访谈**，并依据访谈收集到的**真实信息**撰写文档。
+**【最高指令 - 防幻觉机制】：**
+*   **严禁捏造数据：** 正文中出现的任何数据（百分比、金额、时间参数等）、具体企业名称、引用语，必须严格来源于用户在 5 轮访谈中的回答。
+*   **定性代替定量：** 如果用户只提供了定性描述（如“效率很低”），你在正文中只能写“效率显著低下”，**绝对不能**自动补全为“效率下降了 30%”。
+*   **事实一致性：** 你的输出必须是用户回答的忠实映射，加上专业的逻辑润色，而非创造性的虚构。
+
+## 2. 工作流程 
+
+### 阶段一：指令解析与提问规划 (Parsing)
+当用户输入一段包含 **[章节标题]**、**[二级要点]** 和 **[行动引导 Action Guide]** 的文本时：
+1.  分析“行动引导”中的 Steps，确定需要从用户那里获取哪些**具体素材**（如：场景、痛点细节、具体数据证据、机会点）。
+2.  规划 5 个问题，确保问题能覆盖所有 Steps 的要求。
+
+### 阶段二：动态启发式访谈 
+开启 5 轮对话。**严禁一次性问完。**
+
+*   **提问策略：**
+    *   **Q1-Q5 动态生成：** 根据用户输入的 Action Guide 逐步提问。
+    *   **数据索取（关键）：** 如果 Action Guide 中包含“验证”、“数据报告”等要求，你必须在提问中显式询问用户：*“您手头是否有具体的统计数据（如百分比、金额）来支持这一观点？如果没有，我们将使用定性描述。”*
+    *   **启发式引导：** 继续使用 A/B 选项或场景例子帮助用户思考，但引导语中涉及的数据必须声明为“例如”。
+
+### 阶段三：正文撰写 
+当用户回答完 Q5 后，基于收集到的信息撰写正文。
+
+*   **写作规范：**
+    *   **结构：** 使用用户输入的标题。
+    *   **内容：** 将用户的回答串联成逻辑严密的商业分析。
+    *   **数据处理：**
+        *   若用户提供了数据（如“错误率50%”），请引用。
+        *   若用户未提供数据，使用“据调研观察”、“行业普遍反馈”、“显著存在”等定性词汇，**严禁**编造“78%”、“TOP 5”等细节。
+
+---
+
+## 3. 示例：
+
+**用户输入指令：**
+> 行动引导：Step 3 开展普遍性验证，用户可选渠道：行业数据报告...
+
+**AI 提问 (Q4)：**
+> “根据引导，我们需要验证痛点的普遍性。请问您是否有具体的行业数据或调研样本数据来佐证这一点？（例如：具体的错误率数值、成本占比等）。**如果您暂时没有具体数字，请告知我，我将在文档中侧重于描述现象的普遍性而非具体量化指标。**”
+
+**用户回答 (Q4)：**
+
+> “具体数据没有，但是跟几个仓库经理聊，大家都说这个问题很严重，主要是这就导致了很多人离职。”
+
+**AI 错误写法 (禁止)：**
+> “调研显示，75% 的仓库面临严重问题，导致离职率上升 20%。” *(错误：编造数据)*
+
+**AI 正确写法 (允许)：**
+> “调研访谈显示，这一问题在行业内具有显著的普遍性。多位仓库管理人员反馈，该痛点不仅影响作业效率，更成为一线人员高流失率的关键诱因。” *(正确：忠实反映用户提供的“严重”和“导致离职”)*
+
+---
+
+## 4. 关键约束 
+1.  你的知识库仅用于优化语言表达和逻辑连接，**不可用于补充具体的行业数据**（除非用户明确要求你使用你的内部知识库进行估算，并标记为“估算值”）。
+2.   用户的回答是正文内容的唯一素材来源。
+3. 每次只问一个问题。"""
+
 def create_stream_response(model: str, prompt: str):
     """
     创建一个返回纯文本流的 StreamingResponse
@@ -29,11 +89,12 @@ def create_stream_response(model: str, prompt: str):
 @router.post("/auto-write/questions")
 async def generate_auto_write_questions(req: AutoWriteQuestionsRequest):
     fallback_questions = [
-        "我需要先了解你的想法：这一小节你想写什么？",
-        "这段内容的目标读者是谁？",
-        "你想强调的核心要点或论据有哪些？",
-        "是否有案例、数据或参考资料需要体现？",
-        "你希望的语气或风格是什么？",
+        "请先说说这一小节你想呈现的核心论点或故事线？如果有具体场景，请一起描述。",
+        "你的目标读者是谁？他们最关心的痛点或收益点是什么？",
+        "为支撑这一节，你希望强调的关键论据、事实或步骤有哪些？",
+        "是否有案例、数据或外部资料能支撑上述论据？如果没有，也请说明当前掌握的定性证据。",
+        "最终希望呈现的语气和风格是什么？（如专业、鼓励、客观等）",
+
     ]
 
     points_str = "\n".join(
@@ -50,16 +111,20 @@ async def generate_auto_write_questions(req: AutoWriteQuestionsRequest):
         context_parts.append(f"参考资料：{req.materials[:800]}")
 
     prompt = (
-        "你是一名写作助手，需要在生成正文前通过对话澄清写作需求。"
-        "请基于提供的章节信息，生成5个最有助于完善写作意图的追问。"
-        "要求：\n"
-        "1. 使用简洁中文提问，避免客套。\n"
-        "2. 结合写作要点、目标受众、案例/数据、风格语气等角度自由发挥，不要固定模板。\n"
-        "3. 返回严格的 JSON 数组，每个元素是一条问题字符串。不要输出其它内容。\n"
-        f"\n上下文信息：\n{chr(10).join(context_parts)}"
+        "你正在为一键代写收集素材，需要规划 5 条按顺序展开的访谈提问。"
+        "严格遵循系统提示中的访谈规范，确保每个问题都围绕行动引导逐步索取关键信息。"
+        "输出 JSON 数组：元素是按顺序的中文问题字符串，可附带 1-2 行引导示例（使用“例如：”或项目符号），不要编号或额外解释。"
+        f"\n\n上下文信息：\n{chr(10).join(context_parts)}"
     )
 
-    raw_result = await call_llm(REASONING_MODEL, [{"role": "user", "content": prompt}])
+    raw_result = await call_llm(
+        REASONING_MODEL,
+        [
+            {"role": "system", "content": AUTO_WRITE_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    )
+
     questions = clean_and_parse_json(raw_result, default_value=[])
 
     normalized = []
@@ -78,6 +143,68 @@ async def generate_auto_write_questions(req: AutoWriteQuestionsRequest):
         normalized = fallback_questions
 
     return {"result": normalized[:5]}
+
+@router.post("/auto-write/next-question")
+async def generate_auto_write_next_question(req: AutoWriteNextQuestionRequest):
+    fallback_questions = [
+        "请先说说这一小节你想呈现的核心论点或故事线？如果有具体场景，请一起描述。",
+        "你的目标读者是谁？他们最关心的痛点或收益点是什么？",
+        "为支撑这一节，你希望强调的关键论据、事实或步骤有哪些？",
+        "是否有案例、数据或外部资料能支撑上述论据？如果没有，也请说明当前掌握的定性证据。",
+        "最终希望呈现的语气和风格是什么？（如专业、鼓励、客观等）",
+    ]
+
+    points_str = "\n".join(
+        [
+            f"- {p.get('text', p) if isinstance(p, dict) else str(p)}"
+            for p in req.writingPoints
+        ]
+    )
+
+    context_parts = [f"章节标题：{req.sectionTitle}"]
+    if points_str:
+        context_parts.append(f"写作要点：\n{points_str}")
+    if req.materials.strip():
+        context_parts.append(f"参考资料：{req.materials[:800]}")
+
+    dialog_lines = []
+    question_index = 0
+    for msg in req.history:
+        if msg.role == "assistant":
+            question_index += 1
+            dialog_lines.append(f"Q{question_index}: {msg.text}")
+        else:
+            dialog_lines.append(f"A{question_index}: {msg.text}")
+
+    dialog_block = "\n".join(dialog_lines) if dialog_lines else "(暂无历史)"
+    user_turns = [m for m in req.history if m.role == "user"]
+    current_round = len(user_turns) + 1
+    fallback_idx = max(0, min(len(fallback_questions) - 1, len(user_turns)))
+    fallback_question = fallback_questions[fallback_idx]
+
+    prompt = (
+        "请按照访谈专家的工作流程继续进行 5 轮启发式对话，每次只提出 1 个核心追问。"
+        f"当前轮次：第 {current_round} 轮 / 5。"
+        "结合上下文与已收集的问答，生成下一条能推进素材收集的追问，避免重复或宽泛。"
+        "如果行动引导或历史回答提示需要数据验证，请显式询问用户是否有百分比/金额等具体数据，若没有则说明将以定性描述。"
+        "输出格式：直接给出中文问题文本，如需引导可在后续追加 1-3 行示例/选项（使用“例如：”或项目符号），不要编号或其它解释。"
+        f"\n\n上下文：\n{chr(10).join(context_parts)}"
+        f"\n当前对话：\n{dialog_block}"
+    )
+
+    raw_question = await call_llm(
+        REASONING_MODEL,
+        [
+            {"role": "system", "content": AUTO_WRITE_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+    )
+    question = raw_question.strip().split("\n")[0] if isinstance(raw_question, str) else ""
+
+    if not question:
+        question = fallback_question
+
+    return {"result": question}
 
 # 添加到文件顶部的 process 函数附近
 def process_writing_points(raw_data):

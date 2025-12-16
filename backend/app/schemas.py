@@ -153,3 +153,11 @@ class AutoWriteQuestionsRequest(BaseModel):
     sectionTitle: str
     writingPoints: List[Any] = []
     materials: str = ""
+
+
+class AutoWriteNextQuestionRequest(BaseModel):
+    sectionTitle: str
+    writingPoints: List[Any] = []
+    materials: str = ""
+    history: List[ChatMessageModel] = []
+

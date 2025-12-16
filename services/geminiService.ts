@@ -254,6 +254,19 @@ export const fetchAutoWriteQuestions = async (
     materials: materials || "",
   });
 };
+export const fetchAutoWriteNextQuestion = async (
+  sectionTitle: string,
+  writingPoints: any[] = [],
+  materials: string = "",
+  history: { role: string; text: string }[] = [],
+) => {
+  return postRequest("/auto-write/next-question", {
+    sectionTitle,
+    writingPoints,
+    materials,
+    history,
+  });
+};
 
 // 流式生成
 export const generateArticleStream = async (outline: string, requirements: string, onChunk: (text: string) => void) => {

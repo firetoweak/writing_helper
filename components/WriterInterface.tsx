@@ -12,7 +12,8 @@ import {
     generateSubSectionTemplate,
     polishContent,
     generateToDoFix,
-    fetchAutoWriteQuestions,
+    fetchAutoWriteNextQuestion,
+
 } from '../services/geminiService';
 import { 
     Wand2, Sparkles, MessageSquare, Quote, ArrowUp, 
@@ -25,11 +26,12 @@ type AutoWriteMessage = { role: 'assistant' | 'user'; text: string };
 
 const AUTO_WRITE_TURNS = 5;
 const DEFAULT_AUTO_WRITE_QUESTIONS = [
-    "我需要先了解你的想法：这一小节你想写什么？",
-    "这段内容的目标读者是谁？",
-    "你想强调的核心要点或论据有哪些？",
-    "是否有案例、数据或参考资料需要体现？",
-    "你希望的语气或风格是什么？"
+    "这一小节你想呈现的核心论点或故事线是什么？有没有具体场景可以分享？",
+    "目标读者是谁？他们最关注的痛点或收益点是什么？",
+    "为了支撑论点，你希望强调的关键事实、论据或行动步骤有哪些？",
+    "有没有案例、数据或外部资料支撑上述论据？如果暂时没有，也请说明你手头的定性证据。",
+    "你希望最终呈现的语气和风格是什么？（如专业、鼓励、客观等）"
+
 ];
 
 interface Props {
@@ -163,12 +165,11 @@ const WriterInterface: React.FC<Props> = ({
 
   // Auto-write conversation state
   const [showAutoWriteDialog, setShowAutoWriteDialog] = useState(false);
-  const [autoWriteQuestions, setAutoWriteQuestions] = useState<string[]>(DEFAULT_AUTO_WRITE_QUESTIONS);
   const [autoWriteMessages, setAutoWriteMessages] = useState<AutoWriteMessage[]>([]);
   const [autoWriteInput, setAutoWriteInput] = useState("");
   const [autoWriteStep, setAutoWriteStep] = useState(0);
+  const autoWriteTotal = AUTO_WRITE_TURNS;
 
-  const autoWriteTotal = autoWriteQuestions.length || AUTO_WRITE_TURNS;
 
   // Derive hasSelection for passing to child components
   const hasSelection = selectionRange && selectionRange.start !== selectionRange.end && isEditorSelection;
@@ -451,29 +452,34 @@ const WriterInterface: React.FC<Props> = ({
       setAiInputValue("");
   };
 
+  const getNextAutoWriteQuestion = async (history: AutoWriteMessage[], step: number) => {
+      if (!activeSubNode) return DEFAULT_AUTO_WRITE_QUESTIONS[step] || DEFAULT_AUTO_WRITE_QUESTIONS[0];
+      const fallback = DEFAULT_AUTO_WRITE_QUESTIONS[Math.min(step, DEFAULT_AUTO_WRITE_QUESTIONS.length - 1)] || DEFAULT_AUTO_WRITE_QUESTIONS[0];
+
+      try {
+          const question = await fetchAutoWriteNextQuestion(
+              activeSubNode.title,
+              activeSubNode.writingPoints || [],
+              globalMaterials || "",
+              history
+          );
+
+          if (typeof question === 'string' && question.trim()) {
+              return question.trim();
+          }
+      } catch (error) {
+          console.error('获取下一条代写提问失败', error);
+      }
+
+      return fallback;
+  };
+
   const handleFullWrite = async () => {
       if (!activeSubNode) return;
       setMenuVisible(false);
-      try {
-          const questions = await fetchAutoWriteQuestions(
-              activeSubNode.title,
-              activeSubNode.writingPoints || [],
-              globalMaterials
-          );
+      const firstQuestion = await getNextAutoWriteQuestion([], 0);
 
-          const normalized = Array.isArray(questions)
-              ? questions.filter((q) => typeof q === 'string' && q.trim()).map((q) => q.trim())
-              : [];
-
-          const finalQuestions = (normalized.length ? normalized : DEFAULT_AUTO_WRITE_QUESTIONS).slice(0, AUTO_WRITE_TURNS);
-          setAutoWriteQuestions(finalQuestions);
-          setAutoWriteMessages([{ role: 'assistant', text: finalQuestions[0] }]);
-      } catch (error) {
-          const fallback = DEFAULT_AUTO_WRITE_QUESTIONS.slice(0, AUTO_WRITE_TURNS);
-          setAutoWriteQuestions(fallback);
-          setAutoWriteMessages([{ role: 'assistant', text: fallback[0] }]);
-      }
-
+      setAutoWriteMessages([{ role: 'assistant', text: firstQuestion }]);
       setAutoWriteInput("");
       setAutoWriteStep(0);
       setShowAutoWriteDialog(true);
@@ -518,10 +524,35 @@ const WriterInterface: React.FC<Props> = ({
       if (nextStep >= autoWriteTotal) {
           await runAutoWriteGeneration(updatedMessages);
       } else {
-          const remaining = Math.max(autoWriteTotal - nextStep, 0);
-          const nextQuestion = autoWriteQuestions[nextStep] || `还有其他想补充的吗？（还剩 ${remaining} 次）`;
+          const nextQuestion = await getNextAutoWriteQuestion(updatedMessages, nextStep);
+
           setAutoWriteMessages([...updatedMessages, { role: 'assistant', text: nextQuestion }]);
       }
+  };
+  const renderAutoWriteMessages = () => {
+      let questionCounter = 0;
+      return autoWriteMessages.map((msg, idx) => {
+          const isAssistant = msg.role === 'assistant';
+          if (isAssistant) {
+              questionCounter += 1;
+          }
+          const label = isAssistant ? `Q${questionCounter}` : `A${questionCounter}`;
+
+          return (
+              <div key={idx} className={`flex ${isAssistant ? 'justify-start' : 'justify-end'}`}>
+                  <div
+                      className={`${isAssistant ? 'bg-white text-slate-800 border border-slate-200' : 'bg-primary text-white'} px-4 py-3 rounded-2xl shadow-sm max-w-[90%] whitespace-pre-wrap`}
+                  >
+                      <div className={`text-[11px] font-semibold mb-1 ${isAssistant ? 'text-slate-500' : 'text-white/80'}`}>{label}</div>
+                      {isAssistant ? (
+                          <ReactMarkdown className="prose prose-sm max-w-none text-slate-800 leading-relaxed">{msg.text}</ReactMarkdown>
+                      ) : (
+                          <div className="text-sm leading-relaxed">{msg.text}</div>
+                      )}
+                  </div>
+              </div>
+          );
+      });
   };
 
   const handleAcceptGeneration = () => {
@@ -751,16 +782,10 @@ const WriterInterface: React.FC<Props> = ({
                         <button onClick={() => setShowAutoWriteDialog(false)} className="text-slate-400 hover:text-slate-600 text-sm">关闭</button>
                     </div>
                     <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/60">
-                        {autoWriteMessages.map((msg, idx) => (
-                            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`${msg.role === 'user' ? 'bg-primary text-white rounded-2xl rounded-tr-sm' : 'bg-white text-slate-700 rounded-2xl rounded-tl-sm border border-slate-200'} px-3 py-2 text-sm max-w-[80%] shadow-sm whitespace-pre-wrap`}>
-                                    {msg.text}
-                                </div>
-                            </div>
-                        ))}
+                        {renderAutoWriteMessages()}
                     </div>
                     <div className="p-4 border-t bg-white">
-                        <div className="text-[10px] text-slate-500 mb-2">请连续回答 {autoWriteTotal} 次问题，系统将基于你的输入自动生成本节内容。</div>
+                        <div className="text-[10px] text-slate-500 mb-2">请逐轮回答，共 {autoWriteTotal} 轮，每轮仅需回答 1 个问题，系统会在收集满后自动生成本节内容。</div>
                         <div className="flex gap-2">
                             <input
                                 value={autoWriteInput}
