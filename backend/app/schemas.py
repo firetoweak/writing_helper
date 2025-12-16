@@ -147,3 +147,16 @@ class ChatWithRefRequest(BaseModel):
     query: str
     context: str
     references: List[Any] = []
+
+# 一键代写前的多轮提问生成
+class AutoWriteQuestionsRequest(BaseModel):
+    sectionTitle: str
+    writingPoints: List[Any] = []
+    materials: str = ""
+
+
+class AutoWriteNextQuestionRequest(BaseModel):
+    sectionTitle: str
+    writingPoints: List[Any] = []
+    materials: str = ""
+    history: List[ChatMessageModel] = []
